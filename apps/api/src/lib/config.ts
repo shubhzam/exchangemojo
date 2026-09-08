@@ -4,6 +4,7 @@
 export class Config {
   readonly port: number;
   readonly nodeEnv: string;
+  readonly databaseUrl: string;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     this.port = Number(env.PORT ?? 4000);
@@ -13,6 +14,13 @@ export class Config {
     if (!Number.isInteger(this.port) || this.port <= 0) {
       throw new Error(`invalid PORT: ${env.PORT}`);
     }
+
+    // no default. a missing db url should stop the process, not silently
+    // connect to something unintended.
+    if (!env.DATABASE_URL) {
+      throw new Error("DATABASE_URL is not set");
+    }
+    this.databaseUrl = env.DATABASE_URL;
   }
 }
 

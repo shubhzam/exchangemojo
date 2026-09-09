@@ -5,6 +5,7 @@ export class Config {
   readonly port: number;
   readonly nodeEnv: string;
   readonly databaseUrl: string;
+  readonly redisUrl: string;
 
   constructor(env: NodeJS.ProcessEnv = process.env) {
     this.port = Number(env.PORT ?? 4000);
@@ -21,6 +22,11 @@ export class Config {
       throw new Error("DATABASE_URL is not set");
     }
     this.databaseUrl = env.DATABASE_URL;
+
+    if (!env.REDIS_URL) {
+      throw new Error("REDIS_URL is not set");
+    }
+    this.redisUrl = env.REDIS_URL;
   }
 }
 

@@ -11,16 +11,21 @@
     "check-types": "tsc --noEmit",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:studio": "prisma studio"
+    "db:studio": "prisma studio",
+    "db:check": "tsx --env-file=.env src/scripts/check-db.ts",
+    "redis:check": "tsx --env-file=.env src/scripts/check-redis.ts"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",
     "@prisma/client": "7.10.0",
+    "cors": "^2.8.6",
     "express": "^5.2.1",
+    "ioredis": "6.0.0",
     "pg": "^8.23.0"
   },
   "devDependencies": {
     "@repo/typescript-config": "workspace:*",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "26.4.1",
     "@types/pg": "^8.23.1",

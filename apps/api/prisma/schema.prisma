@@ -11,3 +11,30 @@ generator client {
 datasource db {
   provider = "postgresql"
 }
+
+enum Market {
+  SOLUSDC
+  ETHUSDC
+  BTCUSDC
+}
+
+enum OrderSide {
+  BUY
+  SELL
+}
+
+enum OrderStatus {
+  NEW
+}
+
+model Order {
+  id        String      @id @default(uuid(7))
+  market    Market
+  side      OrderSide
+  price     Decimal     @db.Decimal(18, 8)
+  quantity  Decimal     @db.Decimal(18, 8)
+  status    OrderStatus @default(NEW)
+  createdAt DateTime    @default(now())
+
+  @@index([market, status, price])
+}

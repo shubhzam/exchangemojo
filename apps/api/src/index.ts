@@ -3,6 +3,8 @@ import cors from "cors";
 import { config } from "./lib/config.js";
 import { pingDb } from "./lib/db.js";
 import { pingRedis } from "./lib/redis.js";
+import { ordersRouter } from "./routes/orders.js";
+import { errorHandler } from "./lib/error-handler.js";
 
 const app = express();
 
@@ -11,7 +13,6 @@ app.use(
     origin: "http://localhost:3000",
   })
 );
-
 app.use(express.json());
 
 // bare liveness check - proves the process is up and routing works.
@@ -33,6 +34,12 @@ app.get("/health", async (_req, res) => {
     },
   });
 });
+
+app.use(ordersRouter);
+
+// registered last - express 5 forwards rejected promises from async
+// handlers here automatically.
+app.use(errorHandler);
 
 app.listen(config.port, () => {
   console.log(`api listening on http://localhost:${config.port}`);

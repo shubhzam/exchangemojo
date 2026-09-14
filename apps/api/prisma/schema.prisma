@@ -32,6 +32,7 @@ enum OrderStatus {
 
 model Order {
   id                String      @id @default(uuid(7))
+  accountId         String
   market            Market
   side              OrderSide
   price             Decimal     @db.Decimal(18, 8)
@@ -40,8 +41,9 @@ model Order {
   status            OrderStatus @default(NEW)
   createdAt         DateTime    @default(now())
 
-  makerTrades Trade[] @relation("MakerOrder")
-  takerTrades Trade[] @relation("TakerOrder")
+  account     Account  @relation(fields: [accountId], references: [id])
+  makerTrades Trade[]  @relation("MakerOrder")
+  takerTrades Trade[]  @relation("TakerOrder")
 
   @@index([market, status, price])
 }
@@ -56,4 +58,30 @@ model Trade {
   makerOrder   Order    @relation("MakerOrder", fields: [makerOrderId], references: [id])
   takerOrder   Order    @relation("TakerOrder", fields: [takerOrderId], references: [id])
   createdAt    DateTime @default(now())
+}
+
+enum Asset {
+  USDC
+  SOL
+  ETH
+  BTC
+}
+
+model Account {
+  id        String   @id @default(uuid(7))
+  createdAt DateTime @default(now())
+
+  balances Balance[]
+  orders   Order[]
+}
+
+model Balance {
+  accountId String
+  asset     Asset
+  free      Decimal @default(0) @db.Decimal(18, 8)
+  locked    Decimal @default(0) @db.Decimal(18, 8)
+
+  account Account @relation(fields: [accountId], references: [id])
+
+  @@id([accountId, asset])
 }

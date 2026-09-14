@@ -3,6 +3,7 @@ import { uuidv7 } from "uuidv7";
 import { prisma } from "../lib/db.js";
 import { getOrderBook } from "../matching-engine/registry.js";
 import type { BookOrder } from "../matching-engine/order-book.js";
+import { reservationFor, reserveFunds, releaseFunds, settleFill } from "./balance-service.js";
 import type { CreateOrderInput, Market } from "@repo/shared";
 import type { OrderStatus } from "../generated/prisma/client.js";
 
@@ -24,12 +25,27 @@ export type OrderResponse = {
   transactTime: number;
 };
 
-export async function createOrder(input: CreateOrderInput): Promise<OrderResponse> {
+export async function createOrder(
+  accountId: string,
+  input: CreateOrderInput
+): Promise<OrderResponse> {
   const book = getOrderBook(input.symbol);
   const takerPrice = new Decimal(input.price);
   const takerQuantity = new Decimal(input.quantity);
-
   const takerId = uuidv7();
+
+  const { asset: reserveAsset, amount: reserveAmount } = reservationFor(
+    input.symbol,
+    input.side,
+    takerPrice,
+    takerQuantity
+  );
+
+  // reservation is a real await - it must complete before the book's
+  // synchronous match block starts, never inside it (planning decision 4)
+  await prisma.$transaction(async (tx) => {
+    await reserveFunds(tx, accountId, reserveAsset, reserveAmount);
+  });
 
   // --- synchronous block starts: no await until persistence below ---
   const { fills, takerRemainingQuantity, touchedMakers } = book.match(
@@ -69,6 +85,7 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRespons
     const created = await tx.order.create({
       data: {
         id: takerId,
+        accountId,
         market: input.symbol,
         side: input.side,
         price: input.price,
@@ -90,6 +107,33 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRespons
         },
       });
       createdTrades.push(trade);
+
+      // settle both sides of this fill. maker's accountId comes from its
+      // own persisted row - we only have makerOrderId from the in-memory
+      // match, not the maker's account.
+      const makerOrder = await tx.order.findUniqueOrThrow({
+        where: { id: fill.makerOrderId },
+      });
+
+      await settleFill(tx, {
+        accountId: makerOrder.accountId,
+        market: input.symbol,
+        side: makerOrder.side,
+        fillPrice: fill.price,
+        fillQuantity: fill.quantity,
+        isTaker: false,
+        takerLimitPrice: null,
+      });
+
+      await settleFill(tx, {
+        accountId,
+        market: input.symbol,
+        side: input.side,
+        fillPrice: fill.price,
+        fillQuantity: fill.quantity,
+        isTaker: true,
+        takerLimitPrice: takerPrice,
+      });
     }
 
     return { order: created, trades: createdTrades };
@@ -106,9 +150,6 @@ export async function createOrder(input: CreateOrderInput): Promise<OrderRespons
     fills: fills.map((fill, i) => {
       const trade = trades[i];
       if (!trade) {
-        // unreachable - trades is built with exactly one entry per fill,
-        // same order, in the transaction above - but the array-index type
-        // can't prove that, same as the order-book.ts checks
         throw new Error("trade/fill count mismatch - this should never happen");
       }
       return {
@@ -159,16 +200,27 @@ export type CancelOrderResponse = {
 export async function cancelOrder(symbol: Market, orderId: string): Promise<CancelOrderResponse> {
   const book = getOrderBook(symbol);
 
-  // synchronous: lookup + removal, no await until persistence below -
-  // same requirement as createOrder's match block
   const canceled = book.cancelOrder(orderId);
   if (!canceled) {
     throw new OrderNotFoundError(orderId);
   }
 
-  const order = await prisma.order.update({
-    where: { id: orderId },
-    data: { status: "CANCELED" },
+  const { asset: releaseAsset, amount: releaseAmount } = reservationFor(
+    symbol,
+    canceled.side,
+    canceled.price,
+    canceled.remainingQuantity
+  );
+
+  const order = await prisma.$transaction(async (tx) => {
+    // release goes to the order's own stored account, never a caller-
+    // supplied header - money correctness, not an auth check
+    const existing = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
+    await releaseFunds(tx, existing.accountId, releaseAsset, releaseAmount);
+    return tx.order.update({
+      where: { id: orderId },
+      data: { status: "CANCELED" },
+    });
   });
 
   const origQty = new Decimal(order.quantity.toString());

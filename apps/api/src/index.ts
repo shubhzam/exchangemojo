@@ -5,6 +5,7 @@ import { pingDb } from "./lib/db.js";
 import { pingRedis } from "./lib/redis.js";
 import { ordersRouter } from "./routes/orders.js";
 import { errorHandler } from "./lib/error-handler.js";
+import { accountsRouter } from "./routes/accounts.js";
 import { rebuildAllBooksFromDb } from "./matching-engine/registry.js";
 
 const app = express();
@@ -37,6 +38,7 @@ app.get("/health", async (_req, res) => {
 });
 
 app.use(ordersRouter);
+app.use(accountsRouter);
 
 // registered last - express 5 forwards rejected promises from async
 // handlers here automatically.

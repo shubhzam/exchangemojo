@@ -25,16 +25,34 @@ enum OrderSide {
 
 enum OrderStatus {
   NEW
+  PARTIALLY_FILLED
+  FILLED
 }
 
 model Order {
-  id        String      @id @default(uuid(7))
-  market    Market
-  side      OrderSide
-  price     Decimal     @db.Decimal(18, 8)
-  quantity  Decimal     @db.Decimal(18, 8)
-  status    OrderStatus @default(NEW)
-  createdAt DateTime    @default(now())
+  id                String      @id @default(uuid(7))
+  market            Market
+  side              OrderSide
+  price             Decimal     @db.Decimal(18, 8)
+  quantity          Decimal     @db.Decimal(18, 8)
+  remainingQuantity Decimal     @db.Decimal(18, 8)
+  status            OrderStatus @default(NEW)
+  createdAt         DateTime    @default(now())
+
+  makerTrades Trade[] @relation("MakerOrder")
+  takerTrades Trade[] @relation("TakerOrder")
 
   @@index([market, status, price])
+}
+
+model Trade {
+  id           String   @id @default(uuid(7))
+  market       Market
+  price        Decimal  @db.Decimal(18, 8)
+  quantity     Decimal  @db.Decimal(18, 8)
+  makerOrderId String
+  takerOrderId String
+  makerOrder   Order    @relation("MakerOrder", fields: [makerOrderId], references: [id])
+  takerOrder   Order    @relation("TakerOrder", fields: [takerOrderId], references: [id])
+  createdAt    DateTime @default(now())
 }

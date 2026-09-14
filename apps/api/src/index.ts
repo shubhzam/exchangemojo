@@ -5,6 +5,7 @@ import { pingDb } from "./lib/db.js";
 import { pingRedis } from "./lib/redis.js";
 import { ordersRouter } from "./routes/orders.js";
 import { errorHandler } from "./lib/error-handler.js";
+import { rebuildAllBooksFromDb } from "./matching-engine/registry.js";
 
 const app = express();
 
@@ -40,6 +41,7 @@ app.use(ordersRouter);
 // registered last - express 5 forwards rejected promises from async
 // handlers here automatically.
 app.use(errorHandler);
+await rebuildAllBooksFromDb();
 
 app.listen(config.port, () => {
   console.log(`api listening on http://localhost:${config.port}`);

@@ -20,9 +20,11 @@
     "@prisma/client": "7.10.0",
     "@repo/shared": "workspace:*",
     "cors": "^2.8.6",
+    "decimal.js": "^10.6.0",
     "express": "^5.2.1",
     "ioredis": "6.0.0",
     "pg": "^8.23.0",
+    "uuidv7": "^1.2.1",
     "zod": "4.5.4"
   },
   "devDependencies": {

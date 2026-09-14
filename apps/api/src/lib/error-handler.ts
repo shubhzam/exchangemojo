@@ -1,10 +1,8 @@
 import type { NextFunction, Request, Response } from "express";
 import { ZodError } from "zod";
 import { Prisma } from "../generated/prisma/client.js";
+import { OrderNotFoundError } from "../services/order-service.js";
 
-// registered last, after every route - express 5 forwards rejected
-// promises from async handlers here automatically, no try/catch
-// needed in the routes themselves.
 export function errorHandler(
   err: unknown,
   _req: Request,
@@ -13,6 +11,11 @@ export function errorHandler(
 ) {
   if (err instanceof ZodError) {
     res.status(400).json({ error: "invalid_input", details: err.issues });
+    return;
+  }
+
+  if (err instanceof OrderNotFoundError) {
+    res.status(404).json({ error: "order_not_found" });
     return;
   }
 

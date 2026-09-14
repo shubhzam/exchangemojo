@@ -29,6 +29,9 @@ export type MatchResult = {
 export class OrderBook {
   private bids: PriceLevel[] = [];
   private asks: PriceLevel[] = [];
+  // id -> order, for O(1) cancel lookup. kept in sync with bids/asks by
+  // every method that adds or removes an order - addOrder, match, cancelOrder.
+  private byId: Map<string, BookOrder> = new Map();
 
   constructor(readonly market: Market) {}
 
@@ -46,21 +49,22 @@ export class OrderBook {
 
     if (existing) {
       existing.orders.push(order);
-      return;
-    }
-
-    const newLevel: PriceLevel = { price: order.price, orders: [order] };
-    const insertAt = levels.findIndex((level) =>
-      order.side === "BUY"
-        ? level.price.lessThan(order.price)
-        : level.price.greaterThan(order.price)
-    );
-
-    if (insertAt === -1) {
-      levels.push(newLevel);
     } else {
-      levels.splice(insertAt, 0, newLevel);
+      const newLevel: PriceLevel = { price: order.price, orders: [order] };
+      const insertAt = levels.findIndex((level) =>
+        order.side === "BUY"
+          ? level.price.lessThan(order.price)
+          : level.price.greaterThan(order.price)
+      );
+
+      if (insertAt === -1) {
+        levels.push(newLevel);
+      } else {
+        levels.splice(insertAt, 0, newLevel);
+      }
     }
+
+    this.byId.set(order.id, order);
   }
 
   match(
@@ -74,9 +78,6 @@ export class OrderBook {
 
     while (remaining.greaterThan(0) && opposing.length > 0) {
       const bestLevel = opposing[0];
-      // unreachable given the while condition above, but this is the
-      // explicit check typescript needs to actually narrow the type -
-      // a .length check elsewhere doesn't prove anything about this access
       if (!bestLevel) break;
 
       const crosses =
@@ -87,8 +88,6 @@ export class OrderBook {
       if (!crosses) break;
 
       const maker = bestLevel.orders[0];
-      // unreachable too - addOrder/the cleanup below never leaves an empty
-      // level in the array - but same reasoning as above applies
       if (!maker) break;
 
       const matchedQty = Decimal.min(remaining, maker.remainingQuantity);
@@ -103,9 +102,48 @@ export class OrderBook {
         if (bestLevel.orders.length === 0) {
           opposing.shift();
         }
+        // fully filled - no longer cancelable, remove from the id index too,
+        // or a later cancel against this id would look like it succeeded
+        this.byId.delete(maker.id);
       }
     }
 
     return { fills, takerRemainingQuantity: remaining, touchedMakers };
+  }
+
+  // removes a resting order by id. returns the removed order, or null if
+  // it isn't resting - already filled, already canceled, or never existed.
+  // this class doesn't distinguish those; the caller decides what "not
+  // found" means at the api level.
+  //
+  // synchronous, same requirement as match() - see planning doc §5.
+  cancelOrder(orderId: string): BookOrder | null {
+    const order = this.byId.get(orderId);
+    if (!order) return null;
+
+    const levels = order.side === "BUY" ? this.bids : this.asks;
+    const levelIndex = levels.findIndex((level) => level.price.equals(order.price));
+    const level = levelIndex === -1 ? undefined : levels[levelIndex];
+
+    if (!level) {
+      // byId and the price levels disagree - shouldn't happen, but don't
+      // pretend the cancel worked if it can't actually be verified
+      this.byId.delete(orderId);
+      return null;
+    }
+
+    const orderIndex = level.orders.findIndex((o) => o.id === orderId);
+    if (orderIndex === -1) {
+      this.byId.delete(orderId);
+      return null;
+    }
+
+    level.orders.splice(orderIndex, 1);
+    if (level.orders.length === 0) {
+      levels.splice(levelIndex, 1);
+    }
+    this.byId.delete(orderId);
+
+    return order;
   }
 }

@@ -139,3 +139,48 @@ export async function getDepth(symbol: Market) {
     asks: asks.map((o) => [o.price.toFixed(8), o.remainingQuantity.toFixed(8)] as [string, string]),
   };
 }
+
+export class OrderNotFoundError extends Error {
+  constructor(orderId: string) {
+    super(`order not found: ${orderId}`);
+    this.name = "OrderNotFoundError";
+  }
+}
+
+export type CancelOrderResponse = {
+  symbol: Market;
+  orderId: string;
+  price: string;
+  origQty: string;
+  executedQty: string;
+  status: OrderStatus;
+};
+
+export async function cancelOrder(symbol: Market, orderId: string): Promise<CancelOrderResponse> {
+  const book = getOrderBook(symbol);
+
+  // synchronous: lookup + removal, no await until persistence below -
+  // same requirement as createOrder's match block
+  const canceled = book.cancelOrder(orderId);
+  if (!canceled) {
+    throw new OrderNotFoundError(orderId);
+  }
+
+  const order = await prisma.order.update({
+    where: { id: orderId },
+    data: { status: "CANCELED" },
+  });
+
+  const origQty = new Decimal(order.quantity.toString());
+  const remainingQty = new Decimal(order.remainingQuantity.toString());
+  const executedQty = origQty.minus(remainingQty);
+
+  return {
+    symbol,
+    orderId: order.id,
+    price: new Decimal(order.price.toString()).toFixed(8),
+    origQty: origQty.toFixed(8),
+    executedQty: executedQty.toFixed(8),
+    status: order.status,
+  };
+}

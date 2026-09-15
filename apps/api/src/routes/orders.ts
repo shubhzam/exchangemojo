@@ -1,7 +1,13 @@
 import { Router } from "express";
 import { z } from "zod";
 import { createOrderSchema, marketSchema } from "@repo/shared";
-import { createOrder, getDepth, cancelOrder } from "../services/order-service.js";
+import {
+  createOrder,
+  getDepth,
+  cancelOrder,
+  getOrder,
+  getOpenOrders,
+} from "../services/order-service.js";
 import { requireAccountHeader } from "../lib/account-context.js";
 
 export const ordersRouter: Router = Router();
@@ -23,4 +29,19 @@ ordersRouter.delete("/api/v3/order", requireAccountHeader, async (req, res) => {
   const orderId = z.string().min(1, "orderId is required").parse(req.query.orderId);
   const result = await cancelOrder(symbol, orderId);
   res.status(200).json(result);
+});
+
+ordersRouter.get("/api/v3/order", requireAccountHeader, async (req, res) => {
+  const symbol = marketSchema.parse(req.query.symbol);
+  const orderId = z.string().min(1, "orderId is required").parse(req.query.orderId);
+  const order = await getOrder(symbol, orderId);
+  res.status(200).json(order);
+});
+
+ordersRouter.get("/api/v3/openOrders", requireAccountHeader, async (req, res) => {
+  const symbol = req.query.symbol
+    ? marketSchema.parse(req.query.symbol)
+    : undefined;
+  const orders = await getOpenOrders(req.accountId, symbol);
+  res.status(200).json(orders);
 });

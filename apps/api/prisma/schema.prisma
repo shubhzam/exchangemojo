@@ -46,6 +46,7 @@ model Order {
   takerTrades Trade[]  @relation("TakerOrder")
 
   @@index([market, status, price])
+  @@index([accountId, status])
 }
 
 model Trade {

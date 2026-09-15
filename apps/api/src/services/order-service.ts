@@ -236,3 +236,68 @@ export async function cancelOrder(symbol: Market, orderId: string): Promise<Canc
     status: order.status,
   };
 }
+
+export type OrderDetailResponse = {
+  orderId: string;
+  symbol: Market;
+  side: "BUY" | "SELL";
+  price: string;
+  origQty: string;
+  executedQty: string;
+  status: OrderStatus;
+  transactTime: number;
+};
+
+function toDetailResponse(order: {
+  id: string;
+  market: string;
+  side: "BUY" | "SELL";
+  price: { toString(): string };
+  quantity: { toString(): string };
+  remainingQuantity: { toString(): string };
+  status: OrderStatus;
+  createdAt: Date;
+}): OrderDetailResponse {
+  const origQty = new Decimal(order.quantity.toString());
+  const remainingQty = new Decimal(order.remainingQuantity.toString());
+  const executedQty = origQty.minus(remainingQty);
+
+  return {
+    orderId: order.id,
+    symbol: order.market as Market,
+    side: order.side,
+    price: new Decimal(order.price.toString()).toFixed(8),
+    origQty: origQty.toFixed(8),
+    executedQty: executedQty.toFixed(8),
+    status: order.status,
+    transactTime: order.createdAt.getTime(),
+  };
+}
+
+export async function getOrder(symbol: Market, orderId: string): Promise<OrderDetailResponse> {
+  const order = await prisma.order.findUnique({ where: { id: orderId } });
+
+  if (!order || order.market !== symbol) {
+    // wrong symbol for this id is treated the same as not found -
+    // not a silent mismatch, planning doc edge case
+    throw new OrderNotFoundError(orderId);
+  }
+
+  return toDetailResponse(order);
+}
+
+export async function getOpenOrders(
+  accountId: string,
+  symbol: Market | undefined
+): Promise<OrderDetailResponse[]> {
+  const orders = await prisma.order.findMany({
+    where: {
+      accountId,
+      status: { in: ["NEW", "PARTIALLY_FILLED"] },
+      ...(symbol ? { market: symbol } : {}),
+    },
+    orderBy: { createdAt: "asc" },
+  });
+
+  return orders.map(toDetailResponse);
+}

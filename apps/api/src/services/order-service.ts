@@ -4,7 +4,8 @@ import { prisma } from "../lib/db.js";
 import { getOrderBook } from "../matching-engine/registry.js";
 import type { BookOrder } from "../matching-engine/order-book.js";
 import { reservationFor, reserveFunds, releaseFunds, settleFill } from "./balance-service.js";
-import type { CreateOrderInput, Market } from "@repo/shared";
+import { publishTrade, publishDepth } from "./streaming-service.js";
+import type { CreateOrderInput, Market, OrderSide } from "@repo/shared";
 import type { OrderStatus } from "../generated/prisma/client.js";
 
 export type FillResponse = {
@@ -25,6 +26,37 @@ export type OrderResponse = {
   transactTime: number;
 };
 
+function computeDepthUpdates(
+  book: ReturnType<typeof getOrderBook>,
+  takerSide: OrderSide,
+  touchedMakers: BookOrder[],
+  takerRestingPrice: Decimal | null
+): { bids: [string, string][]; asks: [string, string][] } {
+  const makerSide: OrderSide = takerSide === "BUY" ? "SELL" : "BUY";
+  const distinctMakerPrices = [...new Set(touchedMakers.map((m) => m.price.toString()))].map(
+    (p) => new Decimal(p)
+  );
+
+  const bids: [string, string][] = [];
+  const asks: [string, string][] = [];
+
+  for (const price of distinctMakerPrices) {
+    const qty = book.getLevelQuantity(makerSide, price).toFixed(8);
+    const tuple: [string, string] = [price.toFixed(8), qty];
+    if (makerSide === "BUY") bids.push(tuple);
+    else asks.push(tuple);
+  }
+
+  if (takerRestingPrice) {
+    const qty = book.getLevelQuantity(takerSide, takerRestingPrice).toFixed(8);
+    const tuple: [string, string] = [takerRestingPrice.toFixed(8), qty];
+    if (takerSide === "BUY") bids.push(tuple);
+    else asks.push(tuple);
+  }
+
+  return { bids, asks };
+}
+
 export async function createOrder(
   accountId: string,
   input: CreateOrderInput
@@ -41,8 +73,6 @@ export async function createOrder(
     takerQuantity
   );
 
-  // reservation is a real await - it must complete before the book's
-  // synchronous match block starts, never inside it (planning decision 4)
   await prisma.$transaction(async (tx) => {
     await reserveFunds(tx, accountId, reserveAsset, reserveAmount);
   });
@@ -108,9 +138,6 @@ export async function createOrder(
       });
       createdTrades.push(trade);
 
-      // settle both sides of this fill. maker's accountId comes from its
-      // own persisted row - we only have makerOrderId from the in-memory
-      // match, not the maker's account.
       const makerOrder = await tx.order.findUniqueOrThrow({
         where: { id: fill.makerOrderId },
       });
@@ -138,6 +165,38 @@ export async function createOrder(
 
     return { order: created, trades: createdTrades };
   });
+
+  // publish only after the transaction above has fully committed - never
+  // broadcast anything that might still roll back. fire-and-forget, not
+  // awaited - a publish failure never blocks or fails this response.
+  for (let i = 0; i < fills.length; i++) {
+    const fill = fills[i];
+    const trade = trades[i];
+    if (!fill || !trade) continue;
+
+    const buyerOrderId = input.side === "BUY" ? takerId : fill.makerOrderId;
+    const sellerOrderId = input.side === "BUY" ? fill.makerOrderId : takerId;
+    const buyerIsMaker = input.side === "SELL";
+
+    publishTrade({
+      market: input.symbol,
+      tradeId: trade.id,
+      price: fill.price.toFixed(8),
+      quantity: fill.quantity.toFixed(8),
+      buyerOrderId,
+      sellerOrderId,
+      tradeTime: trade.createdAt.getTime(),
+      buyerIsMaker,
+    });
+  }
+
+  const depthUpdates = computeDepthUpdates(
+    book,
+    input.side,
+    touchedMakers,
+    takerRemainingQuantity.greaterThan(0) ? takerPrice : null
+  );
+  publishDepth({ market: input.symbol, ...depthUpdates });
 
   return {
     orderId: order.id,
@@ -213,14 +272,20 @@ export async function cancelOrder(symbol: Market, orderId: string): Promise<Canc
   );
 
   const order = await prisma.$transaction(async (tx) => {
-    // release goes to the order's own stored account, never a caller-
-    // supplied header - money correctness, not an auth check
     const existing = await tx.order.findUniqueOrThrow({ where: { id: orderId } });
     await releaseFunds(tx, existing.accountId, releaseAsset, releaseAmount);
     return tx.order.update({
       where: { id: orderId },
       data: { status: "CANCELED" },
     });
+  });
+
+  const remainingLevelQty = book.getLevelQuantity(canceled.side, canceled.price).toFixed(8);
+  const tuple: [string, string] = [canceled.price.toFixed(8), remainingLevelQty];
+  publishDepth({
+    market: symbol,
+    bids: canceled.side === "BUY" ? [tuple] : [],
+    asks: canceled.side === "SELL" ? [tuple] : [],
   });
 
   const origQty = new Decimal(order.quantity.toString());
@@ -278,8 +343,6 @@ export async function getOrder(symbol: Market, orderId: string): Promise<OrderDe
   const order = await prisma.order.findUnique({ where: { id: orderId } });
 
   if (!order || order.market !== symbol) {
-    // wrong symbol for this id is treated the same as not found -
-    // not a silent mismatch, planning doc edge case
     throw new OrderNotFoundError(orderId);
   }
 

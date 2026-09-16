@@ -4,9 +4,10 @@ import { config } from "./lib/config.js";
 import { pingDb } from "./lib/db.js";
 import { pingRedis } from "./lib/redis.js";
 import { ordersRouter } from "./routes/orders.js";
-import { errorHandler } from "./lib/error-handler.js";
 import { accountsRouter } from "./routes/accounts.js";
+import { errorHandler } from "./lib/error-handler.js";
 import { rebuildAllBooksFromDb } from "./matching-engine/registry.js";
+import { attachStreamingGateway } from "./streaming/gateway.js";
 
 const app = express();
 
@@ -43,8 +44,11 @@ app.use(accountsRouter);
 // registered last - express 5 forwards rejected promises from async
 // handlers here automatically.
 app.use(errorHandler);
+
 await rebuildAllBooksFromDb();
 
-app.listen(config.port, () => {
+const server = app.listen(config.port, () => {
   console.log(`api listening on http://localhost:${config.port}`);
 });
+
+attachStreamingGateway(server);

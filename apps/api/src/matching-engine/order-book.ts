@@ -29,8 +29,6 @@ export type MatchResult = {
 export class OrderBook {
   private bids: PriceLevel[] = [];
   private asks: PriceLevel[] = [];
-  // id -> order, for O(1) cancel lookup. kept in sync with bids/asks by
-  // every method that adds or removes an order - addOrder, match, cancelOrder.
   private byId: Map<string, BookOrder> = new Map();
 
   constructor(readonly market: Market) {}
@@ -41,6 +39,16 @@ export class OrderBook {
 
   bestAsk(): Decimal | null {
     return this.asks[0]?.price ?? null;
+  }
+
+  // current total remaining quantity resting at one price level, 0 if
+  // nothing rests there. depth events need a level's aggregate, not any
+  // single order's amount - multiple orders can share a level.
+  getLevelQuantity(side: OrderSide, price: Decimal): Decimal {
+    const levels = side === "BUY" ? this.bids : this.asks;
+    const level = levels.find((l) => l.price.equals(price));
+    if (!level) return new Decimal(0);
+    return level.orders.reduce((sum, o) => sum.plus(o.remainingQuantity), new Decimal(0));
   }
 
   addOrder(order: BookOrder): void {
@@ -102,8 +110,6 @@ export class OrderBook {
         if (bestLevel.orders.length === 0) {
           opposing.shift();
         }
-        // fully filled - no longer cancelable, remove from the id index too,
-        // or a later cancel against this id would look like it succeeded
         this.byId.delete(maker.id);
       }
     }
@@ -111,12 +117,6 @@ export class OrderBook {
     return { fills, takerRemainingQuantity: remaining, touchedMakers };
   }
 
-  // removes a resting order by id. returns the removed order, or null if
-  // it isn't resting - already filled, already canceled, or never existed.
-  // this class doesn't distinguish those; the caller decides what "not
-  // found" means at the api level.
-  //
-  // synchronous, same requirement as match() - see planning doc §5.
   cancelOrder(orderId: string): BookOrder | null {
     const order = this.byId.get(orderId);
     if (!order) return null;
@@ -126,8 +126,6 @@ export class OrderBook {
     const level = levelIndex === -1 ? undefined : levels[levelIndex];
 
     if (!level) {
-      // byId and the price levels disagree - shouldn't happen, but don't
-      // pretend the cancel worked if it can't actually be verified
       this.byId.delete(orderId);
       return null;
     }

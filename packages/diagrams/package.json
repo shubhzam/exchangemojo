@@ -1,0 +1,17 @@
+{
+  "name": "@repo/diagrams",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "renders apps/docs/diagrams with excalidraw's own export in headless chromium",
+  "scripts": {
+    "render": "esbuild src/entry.js --bundle --format=iife --minify --outfile=out/bundle.js --define:process.env.NODE_ENV='\"production\"' --loader:.woff2=file --loader:.css=empty --log-level=warning && node src/render.mjs"
+  },
+  "devDependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.65.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  }
+}
